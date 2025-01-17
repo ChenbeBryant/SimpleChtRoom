@@ -5,6 +5,7 @@
 #include <thread>
 #include <mutex>
 #include <winsock2.h>
+#include <unistd.h>
 
 #pragma comment(lib, "ws2_32.lib")  // 需要链接 WS2_32.dll
 
@@ -32,7 +33,17 @@ void handle_client(SOCKET client_socket) {
 
         // 获取当前时间戳和主机名
         std::string timestamp = get_timestamp();
-        std::string host_name = "ClientHost";  // 这里可以根据需求获取客户端主机名
+
+        char host_name[256]  = "UnknownClient";
+        int result;
+
+        result = gethostname(host_name, sizeof(host_name));
+
+        if (result == -1) {
+            perror("gethostname");
+            return;
+        }
+
         std::string message = timestamp + " " + host_name + ": " + buffer;
 
         // 将消息转发给所有客户端
