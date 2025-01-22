@@ -1,21 +1,7 @@
-#include <iostream>
-#include <thread>
-#include <winsock2.h>
-#include <vector>
-#include <string>
 #include "gameserver.h"
-#include <mutex>
-#include <algorithm>
-#include <set>
 
 using namespace std;
 #pragma comment(lib, "ws2_32.lib")
-
-struct Player {
-    SOCKET socket;
-    int x, y;       //坐标
-    std::string name; //id
-};
 
 static int connected_clients = 0;
 
@@ -52,17 +38,17 @@ bool updateClientCount(int delta) {
     return false;
 }
 
+bool isPositionValid(int x, int y) {
+    return x >= 0 && x < 40 && y >= 0 && y < 40;
+}
+
 // 处理单个客户端的连接
-void handle_client(SOCKET client_socket, std::vector<Player>& players) {
+void handleClient(SOCKET client_socket, std::vector<Player>& players ,std::string player_name) {
     char buffer[1];
     int bytes_received;
 
-    std::string player_name = getName();
-    if (player_name.empty() || !updateClientCount(1)) {
-        std::cerr << "Too many clients or no available names." << std::endl;
-        closesocket(client_socket);
+    if (player_name.empty())
         return;
-    }
 
     // 添加新玩家到 players 列表
     Player new_player{client_socket, 0, 0, player_name};
@@ -70,8 +56,6 @@ void handle_client(SOCKET client_socket, std::vector<Player>& players) {
         std::lock_guard<std::mutex> lock(client_count_mutex);
         players.push_back(new_player);
     }
-
-    std::cout << "New player connected as " << player_name << std::endl;
 
     while (true) {
         bytes_received = recv(client_socket, buffer, sizeof(buffer), 0);
@@ -102,18 +86,32 @@ void handle_client(SOCKET client_socket, std::vector<Player>& players) {
         }
 
         if (player) {
-            if (key == 'w') player->y--;  // 向上移动
-            if (key == 's') player->y++;  // 向下移动
-            if (key == 'a') player->x--;  // 向左移动
-            if (key == 'd') player->x++;  // 向右移动
+            if (key == 'q') {
+                break;  // 'q' 按下时退出程序
+            } else if (key == 'w' && isPositionValid(player->x, player->y + 1)) {
+                player->y--;  // 向上移动
+            } else if (key == 's' && isPositionValid(player->x, player->y - 1)) {
+                player->y++;  // 向下移动
+            } else if (key == 'a' && isPositionValid(player->x - 1, player->y)) {
+                player->x--;  // 向左移动
+            } else if (key == 'd' && isPositionValid(player->x + 1, player->y)) {
+                player->x++;  // 向右移动
+            }
 
-            std::string position = "Player "+ player->name +"at (" + std::to_string(player->x) + ", " + std::to_string(player->y) + ")";
+            std::string position = "Player "+ player->name +" at (" + std::to_string(player->x) + ", " + std::to_string(player->y) + ")";
             std::cout << position << std::endl;
+
+            PacketPlayerInfo playerInfo{ 100, 0, player->name, player->x, player->y };
+            char buffer[sizeof(PacketPlayerInfo)];
+            memcpy(buffer, &playerInfo, sizeof(PacketPlayerInfo));
 
             // 广播位置更新给所有客户端
             for (auto& p : players) {
-                if (p.socket != client_socket) {
-                    send(p.socket, position.c_str(), position.size(), 0);
+                int a = 0;
+               /*if (p.socket != client_socket) */
+               {
+                    send(p.socket, buffer, sizeof(PacketPlayerInfo), 0);
+                    //send(p.socket, position.c_str(), position.size(), 0);
                 }
             }
         }
@@ -160,14 +158,6 @@ bool initServer(sockaddr_in &server_addr ,SOCKET &server_socket){
     return true;
 }
 
-// std::string getNextPlayerId() {//目前限制人数为4个
-//     static char next_id = 'a' - 1; 
-//     if (next_id >= 'a' + 4 - 1) { 
-//         return '\0'; 
-//     }
-//     return "xxx";
-// }
-
 // 监听并接受连接
 int main() {
     WSADATA wsaData;
@@ -206,10 +196,13 @@ int main() {
 
         // 如果成功获取了名字，则增加客户端计数并添加新玩家到 players 列表
         if (updateClientCount(1)) {
+
+            send(client_socket, player_name.c_str(), player_name.size() + 1, 0); // 为客户端传入本地玩家啊名称，包含终止符
+
             players.push_back({client_socket, 0, 0, player_name});  // 初始位置为(0,0)
 
             // 为每个新连接创建新线程
-            std::thread(handle_client, client_socket, std::ref(players)).detach();
+            std::thread(handleClient, client_socket, std::ref(players), player_name).detach();
         } else {
             // 如果更新客户端计数失败，说明超过了最大连接数
             std::cerr << "Failed to add new client. Max connections reached." << std::endl;
@@ -217,27 +210,6 @@ int main() {
             closesocket(client_socket);
         }
     }
-
-    // while (true) {
-    //     client_socket = accept(server_socket, (sockaddr*)&client_addr, &client_size);
-    //     if (client_socket == INVALID_SOCKET) {
-    //         std::cerr << "Accept failed." << std::endl;
-    //         continue;
-    //     }
-
-    //     std::cout << "New client connected!" << std::endl;
-
-    //     // 添加新玩家
-    //     std::string newPlayerId = getNextPlayerId();
-    //     if ("" != newPlayerId) {
-    //         players.push_back({client_socket, 0, 0, newPlayerId});  // 初始位置为(0,0)
-    //         // 为每个新连接创建新线程
-    //         std::thread(handle_client, client_socket, std::ref(players)).detach();
-    //     } else {
-    //             std::cerr << "Max player limit reached. Rejecting new connection." << std::endl;
-    //             closesocket(client_socket);
-    //         }
-    // }
 
     closesocket(server_socket);
     WSACleanup();
